@@ -1,10 +1,12 @@
-import os
+import os.path
 
 SECRET_KEY = 'chave_secreta_do_ti'
-DEBUG = True
+
+DEBUZ = True
 
 DB_HOST = 'localhost'
-DB_NAME = r'C:\Users\Aluno\Downloads\BANCO\BANCO.FDB'
+DB_NAME = r'C:\Users\Aluno\Downloads\NanaNenem-back-main\NanaNenem-back-main\BANCO.FDB'
+
 DB_USER = 'sysdba'
 DB_PASSWORD = 'sysdba'
 

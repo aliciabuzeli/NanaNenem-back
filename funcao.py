@@ -1,235 +1,116 @@
-from flask_bcrypt import generate_password_hash, check_password_hash
-from flask import request, current_app, render_template
+import jwt, uuid, secrets, os
+from datetime import datetime, timezone, timedelta
+from functools import wraps
+from flask import request, jsonify, current_app
+from flask_bcrypt import check_password_hash
+from flask_mail import Message
 
-# Importar o con da main
-from db import conexao
 
-# Bibliotecas para envio de e-mail
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+# ── Senha forte ───────────────────────────────────────────────────────────────
+def verificar_senha(senha):
+    mai = min = num = esp = False
+    for c in senha:
+        if c.isupper(): mai = True
+        elif c.islower(): min = True
+        elif c.isdigit(): num = True
+        else: esp = True
+    return mai and min and num and esp
 
-# Bibliotecas para token
-import jwt
-import datetime
 
-# Função para verificar existente
-def verificar_existente(tipo, id_usuario = None):
-    # Por padrão, o id_usuario é none (quando não passamos na hora de chamar a função)
+# ── JWT ───────────────────────────────────────────────────────────────────────
+def gerar_token(id_usuario, is_admin=False):
+    jti = str(uuid.uuid4())
+    payload = {
+        'sub': id_usuario,
+        'admin': is_admin,
+        'jti': jti,
+        'exp': datetime.now(timezone.utc) + timedelta(minutes=current_app.config['JWT_MINUTOS'])
+    }
+    return jwt.encode(payload, current_app.config['SECRET_KEY'], algorithm='HS256'), jti
 
-    # Cria conexão com o banco
-    con = conexao()
-    cur = con.cursor()
-    try:
 
-        # Verifica CPF/CNPJ
-        if tipo == 1:
-            # Se estiver editando um usuário (ignora o próprio id)
-            if id_usuario:
-                cur.execute("""SELECT 1
-                               FROM USUARIO
-                               WHERE CPF = ? AND ID_USUARIO != ?""", (id_usuario))
-            else:
-                # Verifica se já existe
-                cur.execute("""SELECT 1
-                           FROM USUARIOS
-                           WHERE CPF = ?""", (id_usuario, ))
+def token_requerido(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        from main import con
+        header = request.headers.get('Authorization', '')
+        if not header.startswith('Bearer '):
+            return jsonify({'error': 'Token não fornecido!'}), 401
+        token = header.split(' ')[1]
+        try:
+            payload = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token expirado!'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Token inválido!'}), 401
 
-        # Verifica e-mail
-        elif tipo == 2:
-            # Se estiver editando (ignora o próprio id)
-            if id_usuario:
-                cur.execute("""SELECT 1
-                               FROM USUARIOS
-                               WHERE EMAIL = ? AND ID_USUARIO != ?""", (id_usuario, ))
-            else:
-                # Verifica se já existe
-                cur.execute("""SELECT 1
-                           FROM USUARIOS
-                           WHERE EMAIL = ?""", (id_usuario, ))
-
-        # Se não encontrou, pode usar
-        if not cur.fetchone():
-            return True
-        return False
-
-    except Exception as e:
-        return False
-    finally:
+        cur = con.cursor()
+        cur.execute("SELECT 1 FROM TOKENS_BLACKLIST WHERE JTI = ?", (payload['jti'],))
+        invalido = cur.fetchone()
         cur.close()
-        con.close()
+        if invalido:
+            return jsonify({'error': 'Sessão encerrada. Faça login novamente!'}), 401
+
+        request.uid   = payload['sub']
+        request.admin = payload.get('admin', False)
+        return f(*args, **kwargs)
+    return decorated
 
 
-# Verifica se as senhas são iguais
-def senha_correspondente(senha, confirmar_senha):
-    try:
-        if senha == confirmar_senha:
-            return True
-        return False
-    except Exception as e:
-        return False
+def admin_requerido(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not getattr(request, 'admin', False):
+            return jsonify({'error': 'Acesso restrito ao administrador!'}), 403
+        return f(*args, **kwargs)
+    return decorated
 
 
-# Verifica se a senha é forte
-def senha_forte(senha):
-    try:
-        # Verifica tamanho mínimo
-        if len(senha) < 8:
-            return False
-
-        # Critérios da senha
-        criterios = {
-            "maiuscula": False,
-            "minuscula": False,
-            "numero": False,
-            "especial": False
-        }
-
-        # Percorre cada caractere
-        for s in senha:
-            if s.isupper():
-                criterios["maiuscula"] = True
-            elif s.islower():
-                criterios["minuscula"] = True
-            elif s.isdigit():
-                criterios["numero"] = True
-            elif s.isalnum() is False:
-                criterios["especial"] = True
-
-        # Verifica se todos os critérios foram atendidos
-        if criterios["maiuscula"] == True and criterios["minuscula"] == True and criterios["numero"] == True and criterios["especial"] == True:
-            return True
-
-        return False
-
-    except Exception as e:
-        return False
+# ── Foto ──────────────────────────────────────────────────────────────────────
+def salvar_foto(arquivo):
+    if not arquivo:
+        return None
+    ext = arquivo.filename.rsplit('.', 1)[-1].lower()
+    if ext not in current_app.config['EXTENSOES_PERMITIDAS']:
+        return None
+    nome = f"{uuid.uuid4().hex}.{ext}"
+    arquivo.save(os.path.join(current_app.config['UPLOAD_FOLDER'], nome))
+    return nome
 
 
-# Verifica se a senha já foi usada antes
-def senha_antiga(id_usuario, nova_senha):
-    # Cria conexão
-    con = conexao()
-    cursor = con.cursor()
-    try:
-        # Busca senha atual
-        cursor.execute('SELECT senha FROM usuario WHERE id_usuario = ?', (id_usuario, ))
-        senha_atual_hash = cursor.fetchone()[0]
-
-        # Busca últimas senhas usadas
-        cursor.execute('SELECT FIRST 2 SENHA_HASH FROM HISTORICO_SENHA WHERE id_usuario = ?',
-                   (id_usuario,))
-        ultimas_senhas = cursor.fetchall()
-
-        # Busca a senha mais antiga do histórico
-        cursor.execute(
-            'SELECT FIRST 1 ID_HISTORICO_SENHA FROM HISTORICO_SENHA WHERE id_usuario = ?',
-            (id_usuario,))
-        tem_senha = cursor.fetchone()
-
-        if tem_senha:
-            senha_mais_antiga = tem_senha[0]
-
-        # Verifica se a nova senha já foi usada
-        for u in ultimas_senhas:
-            senha_anterior = u[0]
-            if check_password_hash(senha_anterior, nova_senha):
-                return False
-
-        # Verifica com a senha atual
-        if check_password_hash(senha_atual_hash, nova_senha):
-            return False
-
-        # Data da alteração
-        data_alteracao = datetime.datetime.utcnow()
-
-        # Salva senha atual no histórico
-        cursor.execute("INSERT INTO HISTORICO_SENHA(id_usuario, SENHA_HASH, data_Alteracao) VALUES(?, ?, ?)",
-                       (id_usuario, senha_atual_hash, data_alteracao))
-
-        # Remove códigos de recuperação antigos
-        cursor.execute('DELETE FROM RECUPERACAO_SENHA WHERE id_usuario = ?', (id_usuario,))
-
-        # Mantém apenas as últimas 2 senhas no histórico
-        if ultimas_senhas:
-            if len(ultimas_senhas) == 2:
-                cursor.execute(""" DELETE FROM HISTORICO_SENHA
-                                   WHERE ID_HISTORICO_SENHA = ?""",
-                               (senha_mais_antiga,))
-
-        con.commit()
-
-        return True
-
-    except Exception as e:
-        print(e)
-        return False
+# ── Histórico de senhas ───────────────────────────────────────────────────────
+def senha_ja_usada(con, id_usuario, nova_senha):
+    cur = con.cursor()
+    cur.execute("""
+        SELECT SENHA_HASH FROM HISTORICO_SENHAS
+        WHERE ID_USUARIO = ? ORDER BY DT DESC ROWS 3
+    """, (id_usuario,))
+    rows = cur.fetchall()
+    cur.close()
+    return any(check_password_hash(r[0], nova_senha) for r in rows)
 
 
-# Função para enviar e-mail
-def enviando_email(destinatario, assunto, html):
-    # Dados do remetente
-    user = 'nananenem732@gmail.com'
-    senha = 'jxwf uxid qaga hhah'
-
-    # Monta mensagem
-    msg = MIMEText(html, 'html')
-    msg['From'] = user
-    msg['To'] = destinatario
-    msg['Subject'] = assunto
-
-    try:
-        # Conecta no servidor SMTP
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-
-        # Faz login
-        server.login(user, senha)
-
-        # Envia e-mail
-        server.sendmail(user, [destinatario], msg.as_string())
-    finally:
-        server.quit()
+def salvar_historico(con, id_usuario, senha_hash):
+    cur = con.cursor()
+    cur.execute("INSERT INTO HISTORICO_SENHAS (ID_USUARIO, SENHA_HASH) VALUES (?, ?)", (id_usuario, senha_hash))
+    con.commit()
+    cur.close()
 
 
-# Gera token de autenticação
-def gerar_token(tipo, id_usuario, tempo):
-    # Dados do token
-    payload = { 'tipo': tipo,
-                'id_usuario': id_usuario,
-                'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=tempo)
-               }
-
-    # Chave secreta
-    senha_secreta = current_app.config['SECRET_KEY']
-
-    # Cria token
-    token = jwt.encode(payload, senha_secreta, algorithm='HS256')
-
-    return token
+# ── E-mail ────────────────────────────────────────────────────────────────────
+def enviar_confirmacao(mail, email, nome, token):
+    link = f"http://localhost:5000/confirmar_email/{token}"
+    mail.send(Message(
+        subject='Confirme seu e-mail',
+        recipients=[email],
+        html=f"<h3>Olá {nome}!</h3><p>Clique para confirmar: <a href='{link}'>{link}</a></p><p>Expira em 24h.</p>"
+    ))
 
 
-# Decodifica token
-def decodificar_token():
-    try:
-        # Pega token do cookie
-        token = request.cookies.get("acess_token")
-
-        # Verifica se existe
-        if not token:
-            return False
-
-        # Chave secreta
-        senha_secreta = current_app.config['SECRET_KEY']
-
-        # Decodifica token
-        payload = jwt.decode(token, senha_secreta, algorithms=['HS256'])
-
-        return {'tipo': payload['tipo'], 'id_usuario': payload['id_usuario']}
-
-    # Token expirado
-    except jwt.ExpiredSignatureError:
-        return False
-
-    # Token inválido
-    except jwt.InvalidTokenError:
-        return False
+def enviar_recuperacao(mail, email, nome, token):
+    link = f"http://localhost:5000/redefinir_senha/{token}"
+    mail.send(Message(
+        subject='Recuperação de senha',
+        recipients=[email],
+        html=f"<h3>Olá {nome}!</h3><p>Clique para redefinir: <a href='{link}'>{link}</a></p><p>Expira em 1h.</p>"
+    ))

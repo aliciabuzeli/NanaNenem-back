@@ -11,3 +11,6 @@ Jinja2==3.1.6
 MarkupSafe==3.0.3
 PyJWT==2.12.1
 Werkzeug==3.1.6
+Flask-Mail==0.10.0
+requests==2.32.3
+Pillow==11.2.1
