@@ -9,7 +9,7 @@ from main import app, con, mail
 from funcao import (
     verificar_senha, gerar_token, token_requerido, admin_requerido,
     salvar_foto, senha_ja_usada, salvar_historico,
-    enviar_confirmacao, enviar_recuperacao
+    enviar_confirmacao, enviar_recuperacao, enviar_boas_vindas_vendedor
 )
 
 # ══════════════════════════════════════════════════════════════
@@ -93,7 +93,7 @@ def login():
     try:
         cur = con.cursor()
         cur.execute("""
-            SELECT ID_USUARIO, SENHA, EMAIL_CONFIRMADO, BLOQUEADO, TENTATIVAS, IS_ADMIN
+            SELECT ID_USUARIO, SENHA, EMAIL_CONFIRMADO, BLOQUEADO, TENTATIVAS, IS_ADMIN, PRIMEIRO_ACESSO
             FROM USUARIOS WHERE USUARIO = ?
         """, (usuario,))
         row = cur.fetchone()
@@ -102,7 +102,7 @@ def login():
             cur.close()
             return jsonify({'error': 'Usuário não encontrado!'}), 404
 
-        id_u, senha_hash, confirmado, bloqueado, tentativas, is_admin = row
+        id_u, senha_hash, confirmado, bloqueado, tentativas, is_admin, primeiro_acesso = row
 
         if bloqueado:
             cur.close()
@@ -127,6 +127,13 @@ def login():
         cur.execute("UPDATE USUARIOS SET TENTATIVAS=0 WHERE ID_USUARIO=?", (id_u,))
         con.commit()
         cur.close()
+
+        # Vendedor no primeiro acesso deve redefinir a senha antes de continuar
+        if primeiro_acesso:
+            return jsonify({
+                'error': 'Primeiro acesso detectado. Redefina sua senha para continuar.',
+                'primeiro_acesso': True
+            }), 403
 
         token, _ = gerar_token(id_u, bool(is_admin))
         return jsonify({'mensagem': 'Login realizado!', 'token': token}), 200
@@ -271,6 +278,81 @@ def desbloquear_usuario(id):
     return jsonify({'mensagem': 'Usuário desbloqueado!'}), 200
 
 
+# ── Cadastro de vendedor pelo ADM ─────────────────────────────────────────────
+@app.route('/criar_vendedor', methods=['POST'])
+@token_requerido
+@admin_requerido
+def criar_vendedor():
+    nome    = request.form.get('nome', '').strip()
+    email   = request.form.get('email', '').strip()
+    usuario = request.form.get('usuario', '').strip()
+
+    if not nome:
+        return jsonify({'error': 'Nome é obrigatório!'}), 400
+    if not email:
+        return jsonify({'error': 'E-mail é obrigatório!'}), 400
+    if not usuario:
+        return jsonify({'error': 'Usuário é obrigatório!'}), 400
+
+    try:
+        cur = con.cursor()
+
+        cur.execute("SELECT 1 FROM USUARIOS WHERE USUARIO = ?", (usuario,))
+        if cur.fetchone():
+            cur.close()
+            return jsonify({'error': 'Nome de usuário já cadastrado!'}), 400
+
+        cur.execute("SELECT 1 FROM USUARIOS WHERE EMAIL = ?", (email,))
+        if cur.fetchone():
+            cur.close()
+            return jsonify({'error': 'E-mail já cadastrado!'}), 400
+
+        # Gera senha temporária no formato: Xxxx9999@  (atende todos os critérios)
+        senha_temp  = secrets.token_urlsafe(10)
+        # Garante que atende os critérios: acrescenta prefixo e sufixo fixos
+        senha_temp  = f"V{senha_temp[:6]}1@"
+
+        senha_hash  = generate_password_hash(senha_temp).decode('utf-8')
+        foto        = salvar_foto(request.files.get('foto'))
+
+        # Token de redefinição obrigatória (expira em 24h)
+        token_redef = secrets.token_urlsafe(48)
+        expira      = datetime.now(timezone.utc) + timedelta(hours=24)
+
+        cur.execute("""
+            INSERT INTO USUARIOS
+                (NOME, EMAIL, USUARIO, SENHA, FOTO, EMAIL_CONFIRMADO, PRIMEIRO_ACESSO)
+            VALUES (?, ?, ?, ?, ?, 1, 1)
+        """, (nome, email, usuario, senha_hash, foto))
+        con.commit()
+
+        cur.execute("SELECT MAX(ID_USUARIO) FROM USUARIOS")
+        id_novo = cur.fetchone()[0]
+
+        # Salva token de redefinição obrigatória
+        cur.execute("""
+            INSERT INTO TOKENS_RECUPERACAO (ID_USUARIO, TOKEN, EXPIRA_EM)
+            VALUES (?, ?, ?)
+        """, (id_novo, token_redef, expira))
+        con.commit()
+        cur.close()
+
+        salvar_historico(con, id_novo, senha_hash)
+
+        try:
+            enviar_boas_vindas_vendedor(mail, email, nome, usuario, senha_temp, token_redef)
+        except Exception as e:
+            app.logger.warning(f"E-mail de boas-vindas não enviado: {e}")
+
+        return jsonify({
+            'mensagem': f'Vendedor {nome} cadastrado! E-mail enviado para {email}.',
+            'id': id_novo
+        }), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/recuperar_senha', methods=['POST'])
 def recuperar_senha():
     email = request.get_json().get('email', '').strip()
@@ -319,7 +401,7 @@ def redefinir_senha(token):
 
     senha_hash = generate_password_hash(senha).decode('utf-8')
     salvar_historico(con, id_u, senha_hash)
-    cur.execute("UPDATE USUARIOS SET SENHA=? WHERE ID_USUARIO=?", (senha_hash, id_u))
+    cur.execute("UPDATE USUARIOS SET SENHA=?, PRIMEIRO_ACESSO=0 WHERE ID_USUARIO=?", (senha_hash, id_u))
     cur.execute("UPDATE TOKENS_RECUPERACAO SET USADO=1 WHERE TOKEN=?", (token,))
     con.commit()
     cur.close()

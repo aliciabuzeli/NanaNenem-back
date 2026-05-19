@@ -114,3 +114,28 @@ def enviar_recuperacao(mail, email, nome, token):
         recipients=[email],
         html=f"<h3>Olá {nome}!</h3><p>Clique para redefinir: <a href='{link}'>{link}</a></p><p>Expira em 1h.</p>"
     ))
+
+
+def enviar_boas_vindas_vendedor(mail, email, nome, usuario, senha_temp, token):
+    link = f"http://localhost:5000/redefinir_senha/{token}"
+    mail.send(Message(
+        subject='Bem-vindo(a)! Seus dados de acesso',
+        recipients=[email],
+        html=f"""
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;border:1px solid #e0e0e0;border-radius:8px;padding:32px">
+            <h2 style="color:#2c3e50">Olá, {nome}! 👋</h2>
+            <p>Sua conta foi criada pelo administrador. Aqui estão seus dados de acesso:</p>
+            <table style="background:#f4f6f8;border-radius:6px;padding:16px;width:100%;margin:16px 0">
+                <tr><td style="padding:4px 8px;color:#555">Usuário:</td><td style="padding:4px 8px;font-weight:bold">{usuario}</td></tr>
+                <tr><td style="padding:4px 8px;color:#555">Senha temporária:</td><td style="padding:4px 8px;font-weight:bold;color:#e74c3c">{senha_temp}</td></tr>
+            </table>
+            <p>⚠️ <strong>Por segurança, você deve redefinir sua senha no primeiro acesso.</strong></p>
+            <p style="text-align:center;margin:24px 0">
+                <a href="{link}" style="background:#2c3e50;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-size:15px">
+                    Redefinir minha senha
+                </a>
+            </p>
+            <p style="color:#999;font-size:12px">O link expira em 24 horas. Se não foi você, ignore este e-mail.</p>
+        </div>
+        """
+    ))
