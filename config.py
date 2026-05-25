@@ -5,7 +5,7 @@ SECRET_KEY = 'chave_secreta_do_ti'
 DEBUZ = True
 
 DB_HOST = 'localhost'
-DB_NAME = r'C:\Users\Aluno\Downloads\NanaNenem-back-main\NanaNenem-back-main\BANCO.FDB'
+DB_NAME = r'C:\Users\Aluno\Desktop\backendnana\BANCO.FDB'
 
 DB_USER = 'sysdba'
 DB_PASSWORD = 'sysdba'

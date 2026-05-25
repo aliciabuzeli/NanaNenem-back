@@ -18,10 +18,18 @@ from funcao import (
 
 @app.route('/criar_usuarios', methods=['POST'])
 def criar_usuarios():
-    nome    = request.form.get('nome', '').strip()
-    email   = request.form.get('email', '').strip()
-    usuario = request.form.get('usuario', '').strip()
-    senha   = request.form.get('senha', '').strip()
+    # Aceita tanto JSON quanto form-data
+    if request.is_json:
+        body = request.get_json() or {}
+        nome    = body.get('nome', '').strip()
+        email   = body.get('email', '').strip()
+        usuario = body.get('usuario', '').strip()
+        senha   = body.get('senha', '').strip()
+    else:
+        nome    = request.form.get('nome', '').strip()
+        email   = request.form.get('email', '').strip()
+        usuario = request.form.get('usuario', '').strip()
+        senha   = request.form.get('senha', '').strip()
 
     if not nome:
         return jsonify({'error': 'Nome é obrigatório!'}), 400
@@ -33,12 +41,12 @@ def criar_usuarios():
     try:
         cur = con.cursor()
 
-        cur.execute("SELECT 1 FROM USUARIOS WHERE USUARIO = ?", (usuario,))
+        cur.execute("SELECT 1 FROM USUARIO WHERE USUARIO = ?", (usuario,))
         if cur.fetchone():
             cur.close()
             return jsonify({'error': 'Usuário já cadastrado!'}), 400
 
-        cur.execute("SELECT 1 FROM USUARIOS WHERE EMAIL = ?", (email,))
+        cur.execute("SELECT 1 FROM USUARIO WHERE EMAIL = ?", (email,))
         if cur.fetchone():
             cur.close()
             return jsonify({'error': 'E-mail já cadastrado!'}), 400
@@ -53,7 +61,7 @@ def criar_usuarios():
         """, (nome, email, usuario, senha_hash, foto, token_conf))
         con.commit()
 
-        cur.execute("SELECT MAX(ID_USUARIO) FROM USUARIOS")
+        cur.execute("SELECT MAX(ID_USUARIO) FROM USUARIO")
         id_novo = cur.fetchone()[0]
         cur.close()
 
@@ -73,12 +81,12 @@ def criar_usuarios():
 @app.route('/confirmar_email/<token>', methods=['GET'])
 def confirmar_email(token):
     cur = con.cursor()
-    cur.execute("SELECT ID_USUARIO FROM USUARIOS WHERE TOKEN_EMAIL = ?", (token,))
+    cur.execute("SELECT ID_USUARIO FROM USUARIO WHERE TOKEN_EMAIL = ?", (token,))
     row = cur.fetchone()
     if not row:
         cur.close()
         return jsonify({'error': 'Token inválido!'}), 400
-    cur.execute("UPDATE USUARIOS SET EMAIL_CONFIRMADO=1, TOKEN_EMAIL=NULL WHERE ID_USUARIO=?", (row[0],))
+    cur.execute("UPDATE USUARIO SET EMAIL_CONFIRMADO=1, TOKEN_EMAIL=NULL WHERE ID_USUARIO=?", (row[0],))
     con.commit()
     cur.close()
     return jsonify({'mensagem': 'E-mail confirmado! Você já pode fazer login.'}), 200
@@ -94,7 +102,7 @@ def login():
         cur = con.cursor()
         cur.execute("""
             SELECT ID_USUARIO, SENHA, EMAIL_CONFIRMADO, BLOQUEADO, TENTATIVAS, IS_ADMIN, PRIMEIRO_ACESSO
-            FROM USUARIOS WHERE USUARIO = ?
+            FROM USUARIO WHERE USUARIO = ?
         """, (usuario,))
         row = cur.fetchone()
 
@@ -115,16 +123,16 @@ def login():
         if not check_password_hash(senha_hash, senha):
             novas = tentativas + 1
             if novas >= 3:
-                cur.execute("UPDATE USUARIOS SET TENTATIVAS=?, BLOQUEADO=1 WHERE ID_USUARIO=?", (novas, id_u))
+                cur.execute("UPDATE USUARIO SET TENTATIVAS=?, BLOQUEADO=1 WHERE ID_USUARIO=?", (novas, id_u))
                 con.commit()
                 cur.close()
                 return jsonify({'error': 'Senha incorreta! Conta bloqueada.'}), 403
-            cur.execute("UPDATE USUARIOS SET TENTATIVAS=? WHERE ID_USUARIO=?", (novas, id_u))
+            cur.execute("UPDATE USUARIO SET TENTATIVAS=? WHERE ID_USUARIO=?", (novas, id_u))
             con.commit()
             cur.close()
             return jsonify({'error': f'Senha incorreta! Tentativas restantes: {3 - novas}.'}), 401
 
-        cur.execute("UPDATE USUARIOS SET TENTATIVAS=0 WHERE ID_USUARIO=?", (id_u,))
+        cur.execute("UPDATE USUARIO SET TENTATIVAS=0 WHERE ID_USUARIO=?", (id_u,))
         con.commit()
         cur.close()
 
@@ -162,7 +170,7 @@ def listar_usuarios():
     cur = con.cursor()
     cur.execute("""
         SELECT ID_USUARIO, NOME, EMAIL, USUARIO, FOTO, EMAIL_CONFIRMADO, BLOQUEADO, IS_ADMIN
-        FROM USUARIOS ORDER BY NOME
+        FROM USUARIO ORDER BY NOME
     """)
     rows = cur.fetchall()
     cur.close()
@@ -182,7 +190,7 @@ def buscar_usuarios():
     cur = con.cursor()
     cur.execute("""
         SELECT ID_USUARIO, NOME, EMAIL, USUARIO, FOTO
-        FROM USUARIOS
+        FROM USUARIO
         WHERE LOWER(NOME) CONTAINING LOWER(?)
            OR LOWER(USUARIO) CONTAINING LOWER(?)
            OR LOWER(EMAIL) CONTAINING LOWER(?)
@@ -200,7 +208,7 @@ def buscar_usuarios():
 @token_requerido
 def editar_usuarios(id):
     cur = con.cursor()
-    cur.execute("SELECT NOME, USUARIO, EMAIL, FOTO FROM USUARIOS WHERE ID_USUARIO=?", (id,))
+    cur.execute("SELECT NOME, USUARIO, EMAIL, FOTO FROM USUARIO WHERE ID_USUARIO=?", (id,))
     row = cur.fetchone()
     if not row:
         cur.close()
@@ -215,12 +223,12 @@ def editar_usuarios(id):
         cur.close()
         return jsonify({'error': 'Nome é obrigatório!'}), 400
 
-    cur.execute("SELECT 1 FROM USUARIOS WHERE EMAIL=? AND ID_USUARIO<>?", (email, id))
+    cur.execute("SELECT 1 FROM USUARIO WHERE EMAIL=? AND ID_USUARIO<>?", (email, id))
     if cur.fetchone():
         cur.close()
         return jsonify({'error': 'E-mail já está em uso!'}), 400
 
-    cur.execute("SELECT 1 FROM USUARIOS WHERE USUARIO=? AND ID_USUARIO<>?", (usuario, id))
+    cur.execute("SELECT 1 FROM USUARIO WHERE USUARIO=? AND ID_USUARIO<>?", (usuario, id))
     if cur.fetchone():
         cur.close()
         return jsonify({'error': 'Nome de usuário já em uso!'}), 400
@@ -237,11 +245,11 @@ def editar_usuarios(id):
         senha_hash = generate_password_hash(senha).decode('utf-8')
         salvar_historico(con, id, senha_hash)
         cur.execute("""
-            UPDATE USUARIOS SET NOME=?, USUARIO=?, EMAIL=?, SENHA=?, FOTO=? WHERE ID_USUARIO=?
+            UPDATE USUARIO SET NOME=?, USUARIO=?, EMAIL=?, SENHA=?, FOTO=? WHERE ID_USUARIO=?
         """, (nome, usuario, email, senha_hash, foto, id))
     else:
         cur.execute("""
-            UPDATE USUARIOS SET NOME=?, USUARIO=?, EMAIL=?, FOTO=? WHERE ID_USUARIO=?
+            UPDATE USUARIO SET NOME=?, USUARIO=?, EMAIL=?, FOTO=? WHERE ID_USUARIO=?
         """, (nome, usuario, email, foto, id))
 
     con.commit()
@@ -253,11 +261,11 @@ def editar_usuarios(id):
 @token_requerido
 def deletar_usuarios(id):
     cur = con.cursor()
-    cur.execute("SELECT 1 FROM USUARIOS WHERE ID_USUARIO=?", (id,))
+    cur.execute("SELECT 1 FROM USUARIO WHERE ID_USUARIO=?", (id,))
     if not cur.fetchone():
         cur.close()
         return jsonify({'error': 'Usuário não encontrado!'}), 404
-    cur.execute("DELETE FROM USUARIOS WHERE ID_USUARIO=?", (id,))
+    cur.execute("DELETE FROM USUARIO WHERE ID_USUARIO=?", (id,))
     con.commit()
     cur.close()
     return jsonify({'mensagem': 'Usuário deletado!', 'id': id}), 200
@@ -268,11 +276,11 @@ def deletar_usuarios(id):
 @admin_requerido
 def desbloquear_usuario(id):
     cur = con.cursor()
-    cur.execute("SELECT 1 FROM USUARIOS WHERE ID_USUARIO=?", (id,))
+    cur.execute("SELECT 1 FROM USUARIO WHERE ID_USUARIO=?", (id,))
     if not cur.fetchone():
         cur.close()
         return jsonify({'error': 'Usuário não encontrado!'}), 404
-    cur.execute("UPDATE USUARIOS SET BLOQUEADO=0, TENTATIVAS=0 WHERE ID_USUARIO=?", (id,))
+    cur.execute("UPDATE USUARIO SET BLOQUEADO=0, TENTATIVAS=0 WHERE ID_USUARIO=?", (id,))
     con.commit()
     cur.close()
     return jsonify({'mensagem': 'Usuário desbloqueado!'}), 200
@@ -297,12 +305,12 @@ def criar_vendedor():
     try:
         cur = con.cursor()
 
-        cur.execute("SELECT 1 FROM USUARIOS WHERE USUARIO = ?", (usuario,))
+        cur.execute("SELECT 1 FROM USUARIO WHERE USUARIO = ?", (usuario,))
         if cur.fetchone():
             cur.close()
             return jsonify({'error': 'Nome de usuário já cadastrado!'}), 400
 
-        cur.execute("SELECT 1 FROM USUARIOS WHERE EMAIL = ?", (email,))
+        cur.execute("SELECT 1 FROM USUARIO WHERE EMAIL = ?", (email,))
         if cur.fetchone():
             cur.close()
             return jsonify({'error': 'E-mail já cadastrado!'}), 400
@@ -320,7 +328,7 @@ def criar_vendedor():
         expira      = datetime.now(timezone.utc) + timedelta(hours=24)
 
         cur.execute("""
-            INSERT INTO USUARIOS
+            INSERT INTO USUARIO
                 (NOME, EMAIL, USUARIO, SENHA, FOTO, EMAIL_CONFIRMADO, PRIMEIRO_ACESSO)
             VALUES (?, ?, ?, ?, ?, 1, 1)
         """, (nome, email, usuario, senha_hash, foto))
@@ -357,7 +365,7 @@ def criar_vendedor():
 def recuperar_senha():
     email = request.get_json().get('email', '').strip()
     cur = con.cursor()
-    cur.execute("SELECT ID_USUARIO, NOME FROM USUARIOS WHERE EMAIL=?", (email,))
+    cur.execute("SELECT ID_USUARIO, NOME FROM USUARIO WHERE EMAIL=?", (email,))
     row = cur.fetchone()
     if row:
         token  = secrets.token_urlsafe(48)
@@ -401,7 +409,7 @@ def redefinir_senha(token):
 
     senha_hash = generate_password_hash(senha).decode('utf-8')
     salvar_historico(con, id_u, senha_hash)
-    cur.execute("UPDATE USUARIOS SET SENHA=?, PRIMEIRO_ACESSO=0 WHERE ID_USUARIO=?", (senha_hash, id_u))
+    cur.execute("UPDATE USUARIO SET SENHA=?, PRIMEIRO_ACESSO=0 WHERE ID_USUARIO=?", (senha_hash, id_u))
     cur.execute("UPDATE TOKENS_RECUPERACAO SET USADO=1 WHERE TOKEN=?", (token,))
     con.commit()
     cur.close()
@@ -480,7 +488,7 @@ def listar_tarefas():
         SELECT t.ID_TAREFA, t.TITULO, t.DESCRICAO, t.PRAZO, t.PRIORIDADE,
                t.STATUS, t.TRELLO_ID, u.NOME, t.DT_CRIACAO
         FROM TAREFAS t
-        LEFT JOIN USUARIOS u ON t.RESPONSAVEL = u.ID_USUARIO
+        LEFT JOIN USUARIO u ON t.RESPONSAVEL = u.ID_USUARIO
         ORDER BY t.DT_CRIACAO DESC
     """)
     rows = cur.fetchall()
