@@ -1,13 +1,17 @@
-import os.path
+import os
 
-SECRET_KEY = 'chave_secreta_do_ti'
+from main import app
 
-DEBUZ = True
+app.config['SECRET_KEY'] = 'minha_chave_super_secreta_123'
+app.config['JWT_MINUTOS'] = 60
+
+DEBUG = True
 
 DB_HOST = 'localhost'
-DB_NAME = r'C:\Users\Aluno\Desktop\backendnana\BANCO.FDB'
+DB_NAME = r'C:\Users\Aluno\Downloads\NanaNenem-back-main\NanaNenem-back-main\BANCO.FDB'
 
 DB_USER = 'sysdba'
 DB_PASSWORD = 'sysdba'
 
 UPLOAD_FOLDER = os.path.abspath(os.path.dirname(__file__))
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER

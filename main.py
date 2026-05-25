@@ -10,6 +10,10 @@ mail = Mail(app)
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
+
+app.config['SECRET_KEY'] = 'minha_chave_super_secreta_123'
+app.config['JWT_MINUTOS'] = 60
+
 try:
     con = fdb.connect(
         host=app.config['DB_HOST'],

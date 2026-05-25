@@ -1,9 +1,15 @@
+import smtplib
+from email.mime.text import MIMEText
+
 import jwt, uuid, secrets, os
-from datetime import datetime, timezone, timedelta
+# from datetime import datetime, timezone, timedelta
+import datetime
 from functools import wraps
 from flask import request, jsonify, current_app
 from flask_bcrypt import check_password_hash
 from flask_mail import Message
+
+from main import app
 
 
 # ── Senha forte ───────────────────────────────────────────────────────────────
@@ -15,20 +21,38 @@ def verificar_senha(senha):
         elif c.isdigit(): num = True
         else: esp = True
     return mai and min and num and esp
+    #retorna se é verdadeiro ou falso
 
+def gerar_token(id_usuario):
+    payload = {'id_usuario': id_usuario,
+               'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
+               }
+    token = jwt.encode(payload, app.config['SECRET_KEY'], algorithm='HS256')
 
-# ── JWT ───────────────────────────────────────────────────────────────────────
-def gerar_token(id_usuario, is_admin=False):
-    jti = str(uuid.uuid4())
-    payload = {
-        'sub': id_usuario,
-        'admin': is_admin,
-        'jti': jti,
-        'exp': datetime.now(timezone.utc) + timedelta(minutes=current_app.config['JWT_MINUTOS'])
-    }
-    return jwt.encode(payload, current_app.config['SECRET_KEY'], algorithm='HS256'), jti
+    return token
 
+    # # ── JWT ───────────────────────────────────────────────────────────────────────
+# def gerar_token(id_usuario, is_admin=False, pyjwt=None):
+#
+#     expira = datetime.now(timezone.utc) + timedelta(
+#         minutes=app.config['JWT_MINUTOS']
+#     )
+#
+#     payload = {
+#         'id_usuario': id_usuario,
+#         'is_admin': is_admin,
+#         'exp': expira
+#     }
+#
+#     token = pyjwt.encode(
+#         payload,
+#         app.config['SECRET_KEY'],
+#         algorithm='HS256'
+#     )
+#
+#     return token, expira
 
+    return token, expira
 def token_requerido(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -98,6 +122,22 @@ def salvar_historico(con, id_usuario, senha_hash):
 
 
 # ── E-mail ────────────────────────────────────────────────────────────────────
+
+def enviando_email(destinatario, assunto, mensagem):
+    user = 'alicia.buzeli1105@gmail.com'
+    senha = 'aofb rqjv bucc hhoa'
+
+    msg = MIMEText(mensagem)
+    msg['From'] = user
+    msg['To'] = destinatario
+    msg['Subject'] = assunto
+
+    server = smtplib.SMTP('smtp.gmail.com', 587)
+    server.starttls()
+    server.login(user, senha)
+    server.send_message(msg)
+    server.quit()
+
 def enviar_confirmacao(mail, email, nome, token):
     link = f"http://localhost:5000/confirmar_email/{token}"
     mail.send(Message(
