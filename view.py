@@ -1,5 +1,6 @@
 import random
 
+import jwt
 import jwt as pyjwt
 import requests
 import secrets
@@ -8,9 +9,7 @@ from flask import request, jsonify, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from main import app, con, mail
 from funcao import (
-    verificar_senha, gerar_token, admin_requerido,
-    senha_ja_usada, salvar_historico,
-    enviar_confirmacao, enviar_recuperacao, enviar_boas_vindas_vendedor, enviando_email
+    verificar_senha, gerar_token, decodificar_token, enviando_email
 )
 
 # ══════════════════════════════════════════════════════════════
@@ -530,3 +529,76 @@ def esqueci_senha():
 
     finally:
         cur.close()
+
+@app.route('/editar_usuario/<id_usuario>', methods=['PUT'])
+def editar_usuario(id_usuario):
+    token = request.cookies.get('access_token')
+
+    if not token:
+        return jsonify({"error" : "Token de autentificação necessário"}), 401
+
+    try:
+        payload = decodificar_token(token)
+        id_usuario = payload['id_usuario']
+        tipo = payload['tipo']
+
+        if id_usuario != id and tipo != 0:
+            return  jsonify({"error": "Você não pode editar outro usuário, apenas Administradores"}), 401
+
+    except jwt.ExpiredSignatureError: #token expirado
+        return jsonify({"error": "Token expired"}), 401
+    except jwt.InvalidTokenError: #token invalido
+        return jsonify({"error": "Token invalid"}), 401
+
+    cur = con.cursor()
+    try:
+        cur.execute("""
+            SELECT 1 
+            FROM USUARIO
+            WHERE ID_USUARIO = ?
+        """, (id_usuario,))
+        if not cur.fetchone():
+            return jsonify({"error": "Usuário não encontrado"}), 404
+
+        nome = request.form.get('nome')
+        email = request.form.get('email')
+
+        if not nome or not email:
+            return jsonify({"error": "Nome e email são obrigatórios"}), 400
+
+        email = request.form.get('email').strip()
+        senha = request.form.get('senha')
+        cpf = request.form.get('cpf')
+        telefone = request.form.get('telefone')
+        nome = request.form.get('nome')
+        confirmar_senha = request.form.get('confirmar_senha')
+        imagem = request.files.get('imagem')
+
+        cur.execute("""
+            SELECT 1
+            FROM USUARIO
+            WHERE EMAIL = ? AND ID_USUARIO = ?
+        """, (email, id_usuario))
+        if cur.fetchone():
+            return jsonify({"error": "Email já cadastrado"}), 400
+
+        if not confirmar_senha(senha):
+            return jsonify({"error": "Senha incorreta"}), 400
+
+        senha_hash = generate_password_hash(senha).decode('utf-8')
+
+        cur.execute("""
+            UPDATE USUARIO 
+            SET NOME = ?,
+                EMAIL = ?,
+                TELEFONE = ?,
+                CPF = ?,
+                SENHA = ?,
+                CONFIRMAR_SENHA = ?
+            WHERE ID_USUARIO = ?
+        """, (nome, email, telefone, cpf, senha, id_usuario))
+        con.commit()
+
+        if imagem:
+            nome_imagem = f"{id}.jpg"
+

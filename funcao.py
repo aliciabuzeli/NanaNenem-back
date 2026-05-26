@@ -14,14 +14,37 @@ from main import app
 
 # ── Senha forte ───────────────────────────────────────────────────────────────
 def verificar_senha(senha):
-    mai = min = num = esp = False
-    for c in senha:
-        if c.isupper(): mai = True
-        elif c.islower(): min = True
-        elif c.isdigit(): num = True
-        else: esp = True
-    return mai and min and num and esp
-    #retorna se é verdadeiro ou falso
+    # mai = min = num = esp = False
+    # for c in senha:
+    #     if c.isupper(): mai = True
+    #     elif c.islower(): min = True
+    #     elif c.isdigit(): num = True
+    #     else: esp = True
+    # return mai and min and num and esp
+    # #retorna se é verdadeiro ou falso
+
+    if not senha:
+        return False
+
+    maiuscula = minuscula = numero = especial = False
+
+    for s in senha:
+        if s.isupper():
+            maiuscula = True
+        elif s.islower():
+            minuscula = True
+        elif s.isdigit():
+            numero = True
+        elif s.isalnum():
+            especial = True
+
+    if len(senha) < 8 or len(senha) > 16:
+        return False
+
+    if not (maiuscula and minuscula and numero and especial):
+        return False
+    return
+
 
 def gerar_token(id_usuario):
     payload = {'id_usuario': id_usuario,
@@ -30,6 +53,10 @@ def gerar_token(id_usuario):
     token = jwt.encode(payload, app.config['SECRET_KEY'], algorithm='HS256')
 
     return token
+
+def decodificar_token(token):
+    payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+    return payload
 
     # # ── JWT ───────────────────────────────────────────────────────────────────────
 # def gerar_token(id_usuario, is_admin=False, pyjwt=None):
