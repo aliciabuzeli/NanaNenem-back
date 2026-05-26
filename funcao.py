@@ -53,32 +53,32 @@ def gerar_token(id_usuario):
 #     return token, expira
 
     return token, expira
-def token_requerido(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        from main import con
-        header = request.headers.get('Authorization', '')
-        if not header.startswith('Bearer '):
-            return jsonify({'error': 'Token não fornecido!'}), 401
-        token = header.split(' ')[1]
-        try:
-            payload = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
-        except jwt.ExpiredSignatureError:
-            return jsonify({'error': 'Token expirado!'}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({'error': 'Token inválido!'}), 401
-
-        cur = con.cursor()
-        cur.execute("SELECT 1 FROM TOKENS_BLACKLIST WHERE JTI = ?", (payload['jti'],))
-        invalido = cur.fetchone()
-        cur.close()
-        if invalido:
-            return jsonify({'error': 'Sessão encerrada. Faça login novamente!'}), 401
-
-        request.uid   = payload['sub']
-        request.admin = payload.get('admin', False)
-        return f(*args, **kwargs)
-    return decorated
+# def token_requerido(f):
+#     @wraps(f)
+#     def decorated(*args, **kwargs):
+#         from main import con
+#         header = request.headers.get('Authorization', '')
+#         if not header.startswith('Bearer '):
+#             return jsonify({'error': 'Token não fornecido!'}), 401
+#         token = header.split(' ')[1]
+#         try:
+#             payload = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+#         except jwt.ExpiredSignatureError:
+#             return jsonify({'error': 'Token expirado!'}), 401
+#         except jwt.InvalidTokenError:
+#             return jsonify({'error': 'Token inválido!'}), 401
+#
+#         cur = con.cursor()
+#         cur.execute("SELECT 1 FROM TOKENS_BLACKLIST WHERE JTI = ?", (payload['jti'],))
+#         invalido = cur.fetchone()
+#         cur.close()
+#         if invalido:
+#             return jsonify({'error': 'Sessão encerrada. Faça login novamente!'}), 401
+#
+#         request.uid   = payload['sub']
+#         request.admin = payload.get('admin', False)
+#         return f(*args, **kwargs)
+#     return decorated
 
 
 def admin_requerido(f):
@@ -91,15 +91,15 @@ def admin_requerido(f):
 
 
 # ── Foto ──────────────────────────────────────────────────────────────────────
-def salvar_foto(arquivo):
-    if not arquivo:
-        return None
-    ext = arquivo.filename.rsplit('.', 1)[-1].lower()
-    if ext not in current_app.config['EXTENSOES_PERMITIDAS']:
-        return None
-    nome = f"{uuid.uuid4().hex}.{ext}"
-    arquivo.save(os.path.join(current_app.config['UPLOAD_FOLDER'], nome))
-    return nome
+# def salvar_foto(arquivo):
+#     if not arquivo:
+#         return None
+#     ext = arquivo.filename.rsplit('.', 1)[-1].lower()
+#     if ext not in current_app.config['EXTENSOES_PERMITIDAS']:
+#         return None
+#     nome = f"{uuid.uuid4().hex}.{ext}"
+#     arquivo.save(os.path.join(current_app.config['UPLOAD_FOLDER'], nome))
+#     return nome
 
 
 # ── Histórico de senhas ───────────────────────────────────────────────────────

@@ -1,7 +1,6 @@
 import random
 
 import jwt as pyjwt
-import password
 import requests
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -9,8 +8,8 @@ from flask import request, jsonify, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from main import app, con, mail
 from funcao import (
-    verificar_senha, gerar_token, token_requerido, admin_requerido,
-    salvar_foto, senha_ja_usada, salvar_historico,
+    verificar_senha, gerar_token, admin_requerido,
+    senha_ja_usada, salvar_historico,
     enviar_confirmacao, enviar_recuperacao, enviar_boas_vindas_vendedor, enviando_email
 )
 
@@ -36,7 +35,7 @@ def cadastro_vendedor():
         senha = request.form.get('senha', '').strip()
         telefone = request.form.get('telefone', '').strip()
         confirmar_senha = request.form.get('confirmar_senha').strip()
-        imagem = request.files.get('imagem').strip()
+        imagem = request.files.get('imagem')
 
         if not nome or not email or not senha or not confirmar_senha:
             return jsonify({"error": "Preencha todos os campos obrigatórios"}), 400
@@ -243,7 +242,7 @@ def confirmar_email():
 def login():
     print(app.config.get('SECRET_KEY'))
     try:
-        data = request.get_json(silent=True)
+        data = request.get_json()
 
         if not data:
             return jsonify({
@@ -269,15 +268,20 @@ def login():
             WHERE EMAIL = ?
         """, (email,))
 
-        row = cur.fetchone()
+        usuario = cur.fetchone()
         print('4')
 
-        if not row:
+        if not usuario:
             cur.close()
             return jsonify({'error': 'Usuário não encontrado!'}), 404
         print('5')
 
-        id_u, senha_hash, confirmado, tentativas, bloqueado = row
+        id_u = usuario[0]
+        senha_hash = usuario[1]
+        confirmado = usuario[2]
+        tentativas = int(usuario[3] or 0)
+        bloqueado = usuario[4]
+
         print('6')
 
         if bloqueado:
@@ -359,15 +363,22 @@ def cadastro_cliente():
     cur = con.cursor()
 
     try:
-        nome = request.form.get('nome', '').strip()
-        endereco = request.form.get('endereco', '').strip()
-        cnpj = request.form.get('cnpj', '').strip()
-        telefone = request.form.get('telefone', '').strip()
+        data = request.get_json()
+        nome = data.get('nome', '').strip()
+        print(nome)
+        endereco = data.get('endereco', '').strip()
+        print(endereco)
+        cpf = data.get('cpf', '').strip()
+        print(cpf)
+        telefone = data.get('telefone', '').strip()
+        print(telefone)
+        email = data.get('email', '').strip()
 
-        if not nome or not endereco or not cnpj or not telefone:
+
+        if not nome or not endereco or not cpf or not telefone or not email:
             return jsonify({"error": "Preencha todos os campos obrigatórios"}), 400
 
-        cur.execute("SELECT 1 FROM USUARIO WHERE CNPJ = ?", (cnpj,))
+        cur.execute("SELECT 1 FROM USUARIO WHERE CPF = ?", (cpf,))
 
         if cur.fetchone():
             return jsonify({"error": "CNPJ já cadastrado"}), 400
@@ -375,24 +386,26 @@ def cadastro_cliente():
         cur.execute("""
             INSERT INTO USUARIO
             (ENDERECO,
-             CNPJ,
+             CPF,
              NOME,
              TELEFONE,
+             EMAIL,
              TIPO)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
             endereco,
-            cnpj,
+            cpf,
             nome,
             telefone,
+            email,
             2
         ))
 
         con.commit()
 
         cur.execute(
-            "SELECT ID_USUARIO FROM USUARIO WHERE CNPJ = ?",
-            (cnpj,)
+            "SELECT ID_USUARIO FROM USUARIO WHERE CPF = ?",
+            (cpf,)
         )
 
         resultado = cur.fetchone()
@@ -412,6 +425,108 @@ def cadastro_cliente():
         con.rollback() #passa tudo, se der erro volta tudo
         print(f"Houve um erro: {e}")
         return jsonify({"error": str(e)}), 500
+
+    finally:
+        cur.close()
+
+@app.route('/esqueci_senha', methods=['POST'])
+def esqueci_senha():
+    cur = con.cursor()
+    try:
+        data = request.get_json()
+
+        email = data.get('email', '').strip()
+        codigo = data.get('codigo', '').strip()
+        nova_senha = data.get('nova_senha', '').strip()
+
+        if not email:
+            return  jsonify({'error': 'Email é obrigatório'}), 400
+
+        if not codigo and not nova_senha:
+            cur.execute("""
+                SELECT id_usuario
+                FROM USUARIO
+                WHERE EMAIL = ?
+            """, (email,))
+            if not cur.fetchone():
+                return jsonify({'error' : 'Usuário não encontrado'}), 404
+
+            codigo = f"{secrets.randbelow(1000000):06d}"
+
+            cur.execute("""
+                        UPDATE USUARIO
+                        SET CODIGO = ?
+                        WHERE EMAIL = ?
+            """, (codigo, email))
+            con.commit()
+
+            threading.Thread(
+                target=enviando_email,
+                args=(email, "Recuperação de senha", f"Código: {codigo}"),
+                daemon=True
+            ).start()
+
+            return jsonify({"mensagem": "Código enviado com sucesso!"}), 200
+
+        if codigo and nova_senha:
+            cur.execute("""
+                SELECT ID_USUARIO, SENHA, SENHA_UM, SENHA_DOIS, SENHA_TRES, CODIGO
+                FROM USUARIO
+                WHERE EMAIL = ?
+            """, (email,))
+            usuario = cur.fetchone()
+
+            if not usuario:
+                return jsonify({'error': 'Usuário não encontrado'}), 404
+
+            id_usuario = usuario[0]
+            senha_atual = usuario[1]
+            senha_um = usuario[2]
+            senha_dois = usuario[3]
+            senha_tres = usuario[4]
+            codigo_banco = usuario[5]
+
+            if str(codigo_banco) != str(codigo):
+                return jsonify({'error': 'Código inválido'}), 400
+
+            if not verificar_senha(nova_senha):
+                return jsonify({"error": "A senha não segue nossos padrões de segurança"}), 400
+
+            historico = [senha_atual, senha_um, senha_dois, senha_tres]
+            for senha_hash in historico:
+                if not senha_hash:
+                    continue
+                try:
+                    if check_password_hash(senha_hash, nova_senha):
+                        return jsonify({"error": "Não é permitido reutilizar as últimas 3 senhas"}), 400
+                except ValueError:
+                    continue
+
+            nova_hash = generate_password_hash(nova_senha)
+
+            cur.execute("""
+                UPDATE usuario
+                SET senha      = ?,
+                    senha_um   = ?,
+                    senha_dois = ?,
+                    senha_tres = ?,
+                    codigo     = NULL
+                WHERE id_usuario = ?
+            """, (
+                nova_hash,
+                nova_hash,
+                senha_um,
+                senha_dois,
+                id_usuario
+            ))
+            con.commit()
+
+            return jsonify({"mensagem": "Senha redefinida com sucesso"}), 200
+
+        return jsonify({'error': 'Dados inválidos'}), 400
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
     finally:
         cur.close()
